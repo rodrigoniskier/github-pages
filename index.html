@@ -1,48 +1,108 @@
 <!DOCTYPE html>
 <html lang="pt-br">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>Jogo Hebraico Bíblico – Rodrigo Niskier</title>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Formatador ABNT</title>
   <script src="https://cdn.tailwindcss.com"></script>
-  <link href="https://fonts.googleapis.com/css?family=JetBrains+Mono:400,700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+Hebrew:wght@400;700&display=swap">
-  <style>
-    body {
-      font-family: 'JetBrains Mono', monospace;
-      background: #222c36;
-    }
-    canvas {
-      background: transparent;
-      display: block;
-      margin: 0 auto;
-    }
-    .hebrew {
-      font-family: 'Noto Sans Hebrew', sans-serif;
-      font-size: 2.2rem;
-      direction: rtl;
-    }
-    .modal-bg {
-      background: rgba(0,0,0,0.7);
-    }
-    .slide-in {
-      animation: slide-in 1.1s cubic-bezier(0.4,0,0.2,1);
-    }
-    @keyframes slide-in {
-      from { transform: translateY(-30px); opacity:0; }
-      to { transform: translateY(0); opacity:1; }
-    }
-    .char-choice {
-      transition: transform 0.18s;
-    }
-    .char-choice.selected {
-      transform: scale(1.13);
-      border: 3px solid #2563eb;
-      box-shadow: 0 0 0 4px #2563eb55;
-      z-index: 2;
-    }
-  </style>
+  <script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.9.179/build/pdf.min.js"></script>
 </head>
+<body class="bg-gray-950 min-h-screen flex items-center justify-center p-4">
+  <div class="bg-gray-100 max-w-2xl w-full rounded-xl shadow-2xl p-6 space-y-4">
+    <h1 class="text-2xl font-bold text-center text-gray-900">Formatador de Referências ABNT</h1>
+    <p class="text-sm text-gray-600 text-center">Insira cada referência em um parágrafo diferente ou anexe arquivos (.txt ou .pdf, até 1&nbsp;MB cada). O resultado abrirá em nova página para você revisar e copiar.</p>
+    <textarea id="refs" class="w-full h-48 p-3 border rounded-md" placeholder="Digite as referências aqui, uma por parágrafo..."></textarea>
+    <input id="files" type="file" multiple accept=".txt,.pdf" class="block w-full text-sm text-gray-700">
+    <button id="generate" class="w-full py-2 px-4 bg-blue-600 text-white rounded-md font-semibold hover:bg-blue-700">Formatar</button>
+    <p class="text-xs text-gray-600">⚠️ Sempre confira manualmente as referências geradas. O processo é automático e pode conter erros.</p>
+  </div>
+
+  <script>
+    function parseAuthor(name){
+      name = name.trim();
+      if(!name) return '';
+      const parts = name.split(/\s+/);
+      if(parts.length === 1) return parts[0].toUpperCase();
+      const last = parts.pop().toUpperCase();
+      return `${last}, ${parts.join(' ')}`;
+    }
+
+    function formatRef(str){
+      // tentativa simples: Autor. Titulo. Ano.
+      const match = str.match(/^(.*?)\.?\s+([^\.]+)\.\s*(\d{4})?\.?$/);
+      if(match){
+        const autor = parseAuthor(match[1]);
+        const titulo = match[2].trim();
+        const ano = match[3] ? match[3] : '';
+        return { text: `${autor}. ${titulo}. ${ano}`.trim(), valid: true };
+      }
+      return { text: str.trim(), valid: false };
+    }
+
+    async function readPdf(file){
+      const data = new Uint8Array(await file.arrayBuffer());
+      const pdf = await pdfjsLib.getDocument({data}).promise;
+      let text = '';
+      for(let i=1;i<=pdf.numPages;i++){
+        const page = await pdf.getPage(i);
+        const cont = await page.getTextContent();
+        text += cont.items.map(it => it.str).join(' ') + '\n';
+      }
+      return text;
+    }
+
+    function extractRefsFromText(txt){
+      const lower = txt.toLowerCase();
+      let start = 0;
+      const m = lower.match(/(refer[eê]ncias|bibliografia)/i);
+      if(m) start = lower.indexOf(m[0]) + m[0].length;
+      const part = txt.slice(start);
+      return part.split(/\n\s*\n/).map(s => s.trim()).filter(Boolean);
+    }
+
+    async function readFiles(files){
+      const contents = [];
+      for(const file of files){
+        if(file.size > 1024*1024) continue; // limite 1MB
+        const name = file.name.toLowerCase();
+        if(name.endsWith('.txt')){
+          const text = await file.text();
+          const lines = text.split(/\r?\n/).filter(l => l.trim());
+          contents.push(...lines);
+        } else if(name.endsWith('.pdf')){
+          try{
+            const text = await readPdf(file);
+            contents.push(...extractRefsFromText(text));
+          }catch(e){
+            console.error('Erro ao ler PDF', e);
+          }
+        }
+      }
+      return contents;
+    }
+
+    document.getElementById('generate').addEventListener('click', async () => {
+      const manual = document.getElementById('refs').value
+        .split(/\n\s*\n/)
+        .map(s => s.trim())
+        .filter(Boolean);
+      const fileLines = await readFiles(document.getElementById('files').files);
+      const allRefs = [...manual, ...fileLines];
+      const results = allRefs.map(formatRef);
+      const invalidCount = results.filter(r => !r.valid).length;
+      const formatted = results.map((r,i) => `${i+1}. ${r.text}`).join('\n\n');
+      const w = window.open('', '_blank');
+      w.document.write(`<!DOCTYPE html><html lang='pt-br'><head><meta charset='UTF-8'><title>Referências ABNT</title><style>body{font-family:Arial,sans-serif;padding:20px;}textarea{width:100%;height:80vh;}</style></head><body><h1>Referências no padrão ABNT</h1><p>${invalidCount} referência(s) estavam fora do padrão e foram ajustadas. Revise o resultado.</p><textarea>${formatted.replace(/</g,'&lt;')}</textarea></body></html>`);
+      w.document.close();
+    });
+  </script>
+</body>
+</html>
+index.html
++1
+-0
+
+@@ -46,50 +46,51 @@
 <body class="flex flex-col items-center min-h-screen bg-gray-900">
 
   <!-- Música de fundo -->
@@ -94,574 +154,3 @@
         <div id="feedback" class="text-base text-red-600 font-semibold mt-2 min-h-[28px]"></div>
         <div id="hint" class="text-gray-800 text-sm font-medium"></div>
         <div id="timer" class="text-gray-700 text-xs mt-1"></div>
-      </div>
-    </div>
-  </div>
-
-  <!-- Fim de jogo -->
-  <div id="endModal" class="fixed inset-0 flex items-center justify-center z-50 hidden">
-    <div class="modal-bg absolute inset-0"></div>
-    <div class="relative p-8 bg-white rounded-xl shadow-2xl w-[370px] slide-in text-center">
-      <h2 class="text-2xl text-blue-800 font-bold mb-4">Fim de Jogo!</h2>
-      <p class="mb-2 text-lg">Parabéns <span id="finalPlayer" class="font-bold text-blue-900"></span>!</p>
-      <p class="mb-2 text-lg">Pontuação final: <span id="finalScore" class="font-bold text-blue-700"></span></p>
-      <button onclick="window.location.reload()" class="mt-4 px-5 py-2 bg-blue-600 text-white rounded-lg font-semibold shadow hover:bg-blue-700 transition">Jogar novamente</button>
-    </div>
-  </div>
-
-  <script>
-    // --- URLs de sons e fundo ---
-    const audioFiles = {
-      jump: 'https://opengameart.org/sites/default/files/jump_11.wav',
-      checkpoint: 'https://opengameart.org/sites/default/files/Powerup2.wav',
-      error: 'https://opengameart.org/sites/default/files/error_2.wav',
-      hit: 'https://opengameart.org/sites/default/files/hit_0.wav',
-      success: 'https://opengameart.org/sites/default/files/coin_4.wav',
-      step: 'https://opengameart.org/sites/default/files/jump_11.wav'
-    };
-    const backgroundImageUrl = "https://upload.wikimedia.org/wikipedia/commons/6/6f/Sea_of_Galilee%2C_Israel_%282291790066%29.jpg";
-
-    // --- Sons JS
-    function playSound(url, volume=1.0) {
-      const snd = new Audio(url);
-      snd.volume = volume;
-      snd.play();
-    }
-
-    // --- TELA INICIAL ---
-    let selectedChar = 0;
-    let playerName = "";
-    let usedHint = false;
-    const charImgs = [
-      "https://drive.google.com/uc?export=view&id=1ftgojj7A2vf486g1Rh8gkcvB1jIkeKSL",
-      "https://drive.google.com/uc?export=view&id=1kMdGAgs8aciiAdP4bfEIbvooQyP-gEi1"
-    ];
-
-    const charBtns = [document.getElementById('char1'), document.getElementById('char2')];
-    charBtns.forEach((btn, idx) => {
-      btn.addEventListener('click', () => {
-        selectedChar = idx + 1;
-        charBtns.forEach((b, j) => b.classList.toggle('selected', j === idx));
-        document.getElementById('playBtn').disabled = !(playerName && selectedChar);
-      });
-    });
-    document.getElementById('username').addEventListener('input', function() {
-      playerName = this.value.trim();
-      document.getElementById('playBtn').disabled = !(playerName && selectedChar);
-    });
-
-    // Música de fundo
-    document.getElementById('playBtn').addEventListener('click', function() {
-      document.getElementById('startScreen').style.display = "none";
-      document.getElementById('game').style.display = "";
-      document.getElementById('score').style.display = "";
-      const bgm = document.getElementById('bgm');
-      bgm.volume = 0.12;
-      bgm.play();
-      startGame();
-    });
-
-    // --- PALAVRAS ---
-    const WORDS = [
-      {he: "בֵּן", tr: "ben", pt: ["filho", "menino", "descendente"], dica: "Começa com 'f' (parentesco masculino)"},
-      {he: "אִישׁ", tr: "ish", pt: ["homem", "marido"], dica: "Masculino adulto"},
-      {he: "אֵל", tr: "el", pt: ["deus", "Deus"], dica: "Ser supremo ou divino"},
-      {he: "מֶלֶךְ", tr: "melekh", pt: ["rei"], dica: "Soberano de um povo"},
-      {he: "יָד", tr: "yad", pt: ["mão", "poder"], dica: "Parte do corpo para segurar"},
-      {he: "רֹאשׁ", tr: "rosh", pt: ["cabeça", "líder"], dica: "Topo do corpo, ou líder"},
-      {he: "אֶרֶץ", tr: "erets", pt: ["terra", "país", "solo", "mundo"], dica: "Planeta, solo, nação"},
-      {he: "דָּבָר", tr: "davar", pt: ["palavra", "coisa", "assunto"], dica: "O que se diz ou discute"},
-      {he: "עִיר", tr: "ir", pt: ["cidade"], dica: "Conjunto de casas e ruas, urbe"},
-      {he: "אָב", tr: "av", pt: ["pai", "ancestral"], dica: "Progenitor masculino"},
-      {he: "אֵם", tr: "em", pt: ["mãe"], dica: "Progenitora feminina"},
-      {he: "שָׁנָה", tr: "shanah", pt: ["ano"], dica: "Período de 12 meses"},
-      {he: "שָׁלוֹם", tr: "shalom", pt: ["paz", "bem-estar", "segurança"], dica: "Desejo de tranquilidade"},
-      {he: "שָׁמַיִם", tr: "shamayim", pt: ["céu", "céus"], dica: "Onde estão as nuvens"},
-      {he: "מַיִם", tr: "mayim", pt: ["água", "águas"], dica: "Líquido essencial à vida"},
-      {he: "אוֹר", tr: "or", pt: ["luz", "claridade"], dica: "Permite enxergar"},
-      {he: "עֵין", tr: "ayin", pt: ["olho", "fonte", "vista"], dica: "Sentido da visão"},
-      {he: "אָח", tr: "ach", pt: ["irmão"], dica: "Filho do mesmo pai/mãe"},
-      {he: "אָדָם", tr: "adam", pt: ["homem", "humanidade", "Adão"], dica: "Primeiro homem ou ser humano"},
-      {he: "אָמַר", tr: "amar", pt: ["disse", "dizer", "falou", "falar"], dica: "Ato de expressar palavras"},
-      {he: "עָשָׂה", tr: "asah", pt: ["fez", "fazer", "realizar"], dica: "Ato de executar uma tarefa"},
-      {he: "רָאָה", tr: "ra'ah", pt: ["viu", "ver", "enxergar"], dica: "Perceber com os olhos"},
-      {he: "יָצָא", tr: "yatza", pt: ["saiu", "sair"], dica: "Ir para fora"},
-      {he: "יָשַׁב", tr: "yashav", pt: ["sentou", "assentar", "habitou", "morar", "residir"], dica: "Ficar em um lugar"},
-      {he: "הָלַךְ", tr: "halakh", pt: ["andou", "andar", "caminhou", "caminhar"], dica: "Locomoção com as pernas"},
-      {he: "עָמַד", tr: "amad", pt: ["ficou", "ficar", "permaneceu", "ficar em pé"], dica: "Manter-se parado"},
-      {he: "יָדַע", tr: "yada", pt: ["soube", "saber", "conheceu", "conhecer"], dica: "Ter conhecimento"},
-      {he: "אָכַל", tr: "akal", pt: ["comeu", "comer"], dica: "Ato de ingerir alimento"},
-      {he: "שָׁמַע", tr: "shama", pt: ["ouviu", "ouvir"], dica: "Sentido de escutar"},
-      {he: "שָׁבַר", tr: "shavar", pt: ["quebrou", "quebrar", "despedaçou"], dica: "Partiu em pedaços"},
-    ];
-
-    function normalize(str) {
-      return str
-        .toLowerCase()
-        .normalize('NFD')
-        .replace(/[\u0300-\u036f]/g, '')
-        .replace(/[^a-zA-Z0-9ãõç\s]/g, '')
-        .trim();
-    }
-
-    // GAME ENGINE
-    let player, cameraX, worldLength, groundY, obstacles, currentWordIdx, challengeActive, challengeStartTime, points, wordsFound, keys, charImages;
-    let challengeTimer = null;
-    let challengeTimeout = 16;
-    let bgImg = new window.Image();
-    bgImg.src = backgroundImageUrl;
-
-    // Obstáculos e checkpoints
-    let obstaclesList = [];
-    let checkpointList = [];
-    let lastCheckpoint = {x: 80, y: 320};
-
-    function startGame() {
-      player = {
-        x: 80,
-        y: 320,
-        width: 36,
-        height: 66,
-        vx: 0,
-        vy: 0,
-        speed: 4.2,
-        onGround: true,
-        gravity: 0.58,
-        jumpPower: -10.6,
-        direction: 1
-      };
-      cameraX = 0;
-      worldLength = 3600;
-      groundY = 360;
-      obstacles = [];
-      obstaclesList = [];
-      checkpointList = [];
-      lastCheckpoint = {x: 80, y: 320};
-      currentWordIdx = -1;
-      challengeActive = false;
-      challengeStartTime = 0;
-      points = 0;
-      wordsFound = 0;
-      keys = {};
-
-      generateObstaclesAndCheckpoints();
-      loadCharImages().then(()=>{
-        drawWorld();
-        setTimeout(() => gameLoop(), 250);
-      });
-    }
-
-    // Carregar imagens dos personagens
-    function loadCharImages() {
-      return new Promise(resolve=>{
-        charImages = [];
-        let img1 = new Image(), img2 = new Image();
-        img1.crossOrigin = img2.crossOrigin = "anonymous";
-        img1.src = charImgs[0];
-        img2.src = charImgs[1];
-        img1.onload = img2.onload = function() {
-          charImages = [img1, img2];
-          resolve();
-        };
-      });
-    }
-
-    function generateObstaclesAndCheckpoints() {
-      // Gera obstáculos e checkpoints no cenário
-      obstaclesList = [];
-      let numObs = 15;
-      for (let i=0;i<numObs;i++) {
-        let px = 380 + i*200 + Math.random()*120;
-        let h = 32+Math.floor(Math.random()*32);
-        obstaclesList.push({x: px, y: groundY-h, w: 40, h: h, type: 'obstacle', idx: i});
-      }
-      // checkpoints a cada 5 obstáculos
-      checkpointList = [];
-      for (let i=0;i<=numObs;i+=5) {
-        let cpX = i === 0 ? 80 : (obstaclesList[Math.min(i, obstaclesList.length-1)].x+60);
-        checkpointList.push({x: cpX, y: groundY-45, reached: (i===0)});
-      }
-    }
-
-    const canvas = document.getElementById("game");
-    const ctx = canvas.getContext("2d");
-
-    function drawBackground() {
-      if(bgImg.complete) {
-        // Preenche todo o cenário, rola junto
-        let scale = canvas.height/bgImg.height;
-        let w = bgImg.width*scale;
-        let times = Math.ceil((canvas.width+cameraX)/w);
-        for(let i=0;i<times;i++){
-          ctx.drawImage(bgImg, i*w-cameraX*0.55, 0, w, canvas.height);
-        }
-      } else {
-        ctx.fillStyle = "#7dd3fc";
-        ctx.fillRect(0,0,canvas.width,canvas.height);
-      }
-      // Nome Rodrigo Niskier no fundo, translúcido
-      ctx.save();
-      ctx.globalAlpha = 0.13;
-      ctx.font = "bold 90px JetBrains Mono, monospace";
-      ctx.fillStyle = "#2d2d5a";
-      ctx.textAlign = "center";
-      ctx.fillText("Rodrigo Niskier", canvas.width/2, canvas.height/2+30);
-      ctx.restore();
-    }
-
-    function drawPlayer() {
-      ctx.save();
-      let px = player.x - cameraX + player.width/2, py = player.y + player.height/2;
-      ctx.translate(px, py);
-      ctx.scale(player.direction, 1);
-
-      // Corpo (tronco)
-      ctx.strokeStyle = "#2563eb";
-      ctx.lineWidth = 6;
-      ctx.beginPath();
-      ctx.moveTo(0, -8); // pescoço
-      ctx.lineTo(0, 25); // cintura
-      ctx.stroke();
-
-      // Pernas
-      ctx.lineWidth = 5;
-      ctx.beginPath();
-      ctx.moveTo(0, 25);
-      ctx.lineTo(-10, 52);
-      ctx.moveTo(0, 25);
-      ctx.lineTo(10, 52);
-      ctx.stroke();
-
-      // Braços
-      ctx.lineWidth = 4.2;
-      ctx.beginPath();
-      ctx.moveTo(0, 2);
-      ctx.lineTo(-17, 25);
-      ctx.moveTo(0, 2);
-      ctx.lineTo(17, 25);
-      ctx.stroke();
-
-      // Cabeça (imagem)
-      ctx.save();
-      ctx.beginPath();
-      ctx.arc(0, -21, 18, 0, 2 * Math.PI);
-      ctx.closePath();
-      ctx.clip();
-      if (charImages && charImages[selectedChar-1]) {
-        ctx.drawImage(charImages[selectedChar-1], -18, -39, 36, 36);
-      } else {
-        ctx.fillStyle = "#1677ee";
-        ctx.arc(0, -21, 17, 0, 2 * Math.PI);
-        ctx.fill();
-      }
-      ctx.restore();
-
-      ctx.restore();
-    }
-
-    function drawGround() {
-      ctx.fillStyle = "#222b3e";
-      ctx.fillRect(-cameraX, groundY, worldLength+300, canvas.height-groundY);
-      ctx.fillStyle = "#495980";
-      ctx.fillRect(-cameraX, groundY+30, worldLength+300, canvas.height-groundY-30);
-      for(let i=0;i<35;i++){
-        ctx.fillStyle = "#94a3b8";
-        ctx.fillRect(i*100-30-cameraX, groundY+30, 30, 7);
-      }
-    }
-
-    function drawObstaclesAndCheckpoints() {
-      // Obstáculos
-      obstaclesList.forEach(obs=>{
-        ctx.save();
-        ctx.fillStyle = "#ad7d52";
-        ctx.strokeStyle = "#46331a";
-        ctx.lineWidth = 2.7;
-        ctx.beginPath();
-        ctx.rect(obs.x - cameraX, obs.y, obs.w, obs.h);
-        ctx.fill();
-        ctx.stroke();
-        // Detalhe visual
-        ctx.fillStyle = "#eab308";
-        ctx.fillRect(obs.x - cameraX+12, obs.y+obs.h-11, 16,6);
-        ctx.restore();
-      });
-      // Checkpoints (bandeiras)
-      checkpointList.forEach((cp, idx)=>{
-        ctx.save();
-        ctx.beginPath();
-        ctx.moveTo(cp.x - cameraX, cp.y+32);
-        ctx.lineTo(cp.x - cameraX, cp.y);
-        ctx.lineWidth = 5;
-        ctx.strokeStyle = cp.reached ? "#16a34a":"#64748b";
-        ctx.stroke();
-        ctx.fillStyle = cp.reached ? "#16a34a":"#64748b";
-        ctx.beginPath();
-        ctx.moveTo(cp.x - cameraX, cp.y);
-        ctx.lineTo(cp.x - cameraX+22, cp.y+8);
-        ctx.lineTo(cp.x - cameraX, cp.y+16);
-        ctx.closePath();
-        ctx.fill();
-        ctx.restore();
-      });
-    }
-
-    function drawObstaclesWords() {
-      // Palavras como antes
-      for (let ob of obstacles) {
-        if (!ob.found) {
-          ctx.save();
-          ctx.font = "2.6rem 'Noto Sans Hebrew', sans-serif";
-          ctx.fillStyle = "#fbbf24";
-          ctx.textAlign = "center";
-          ctx.shadowColor = "#facc15";
-          ctx.shadowBlur = 7;
-          ctx.fillText(WORDS[ob.idx].he, ob.x - cameraX + 18, ob.y + 39);
-          ctx.restore();
-        }
-      }
-    }
-
-    function drawWorld() {
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-      drawBackground();
-      drawGround();
-      drawObstaclesAndCheckpoints();
-      drawObstaclesWords();
-      drawPlayer();
-      ctx.save();
-      ctx.globalAlpha = 0.15;
-      ctx.font = "16px monospace";
-      ctx.fillStyle = "#fff";
-      ctx.fillText(`Pos: ${(player.x|0)}/${worldLength}`, 35, 24);
-      ctx.restore();
-    }
-
-    function updatePlayer() {
-      player.vx = 0;
-      let moved = false;
-      if (keys["KeyA"]) { player.vx = -player.speed; player.direction = -1; moved=true;}
-      if (keys["KeyD"]) { player.vx = +player.speed; player.direction = 1; moved=true;}
-      if ((keys["KeyW"] || keys["Space"]) && player.onGround) {
-        player.vy = player.jumpPower;
-        player.onGround = false;
-        playSound(audioFiles.jump,0.55);
-      }
-      if(moved && player.onGround && Math.random()>0.8) playSound(audioFiles.step,0.11);
-      player.vy += player.gravity;
-      player.y += player.vy;
-      if (player.y + player.height >= groundY+2) {
-        player.y = groundY - player.height + 2;
-        player.vy = 0;
-        player.onGround = true;
-      }
-      player.x += player.vx;
-      if (player.x < 0) player.x = 0;
-      if (player.x > worldLength-player.width) player.x = worldLength-player.width;
-      cameraX = Math.max(0, Math.min(player.x - 350, worldLength - canvas.width + 60));
-    }
-
-    function collideObstacle() {
-      // Checa obstáculos físicos
-      for (let obs of obstaclesList) {
-        if (
-          player.x + player.width > obs.x &&
-          player.x < obs.x + obs.w &&
-          player.y + player.height > obs.y &&
-          player.y < obs.y + obs.h
-        ) {
-          return obs;
-        }
-      }
-      return null;
-    }
-
-    function updateCheckpoints() {
-      for (let i = checkpointList.length-1; i>=0;i--) {
-        let cp = checkpointList[i];
-        if(player.x >= cp.x-2) {
-          cp.reached = true;
-          lastCheckpoint = {x: cp.x, y: player.y};
-          if (!cp._justNotified) {
-            playSound(audioFiles.checkpoint,0.5);
-            cp._justNotified = true;
-          }
-        }
-      }
-    }
-
-    // --- Palavras para coleta ---
-    function generateWordObstacles() {
-      obstacles = [];
-      let usedIndexes = new Set();
-      for (let i = 0; i < 9; i++) {
-        let px = 350 + Math.floor(Math.random() * (worldLength-500));
-        let idx;
-        do {
-          idx = Math.floor(Math.random()*WORDS.length);
-        } while (usedIndexes.has(idx) && usedIndexes.size < WORDS.length-1);
-        usedIndexes.add(idx);
-        obstacles.push({x: px, y: groundY-38, idx, found:false});
-      }
-    }
-    generateWordObstacles();
-
-    function checkObstacleCollision() {
-      if (challengeActive) return;
-      // Palavra
-      for (let i = 0; i < obstacles.length; i++) {
-        let ob = obstacles[i];
-        if (!ob.found &&
-            player.x + player.width > ob.x &&
-            player.x < ob.x + 44 &&
-            player.y + player.height > ob.y &&
-            player.y < ob.y + 60) {
-          currentWordIdx = i;
-          triggerChallenge(ob.idx);
-          break;
-        }
-      }
-      // Físico
-      let obs = collideObstacle();
-      if (obs) {
-        playSound(audioFiles.hit,0.39);
-        setTimeout(()=>{
-          player.x = lastCheckpoint.x;
-          player.y = lastCheckpoint.y;
-          player.vx = 0; player.vy = 0;
-        },100);
-      }
-    }
-
-    // ========= DESAFIO DE PALAVRA ==============
-    function triggerChallenge(wordIdx) {
-      challengeActive = true;
-      usedHint = false;
-      document.getElementById('modal').classList.remove('hidden');
-      document.getElementById('hebrewWord').textContent = WORDS[wordIdx].he;
-      document.getElementById('answerInput').value = "";
-      document.getElementById('feedback').textContent = "";
-      document.getElementById('hint').textContent = "";
-      document.getElementById('answerInput').focus();
-      document.getElementById('hintBtn').disabled = false;
-      challengeStartTime = performance.now();
-      let timerEl = document.getElementById('timer');
-      timerEl.textContent = `Tempo: ${challengeTimeout.toFixed(1)}s`;
-      let secondsElapsed = 0;
-      clearInterval(challengeTimer);
-      challengeTimer = setInterval(() => {
-        let now = performance.now();
-        secondsElapsed = (now - challengeStartTime)/1000;
-        let left = Math.max(0, challengeTimeout - secondsElapsed);
-        timerEl.textContent = `Tempo: ${left.toFixed(1)}s`;
-        if (left <= 0) {
-          clearInterval(challengeTimer);
-          failChallenge();
-        }
-      }, 90);
-    }
-
-    document.getElementById('hintBtn').addEventListener('click', function() {
-      if (challengeActive && !usedHint) {
-        let idx = obstacles[currentWordIdx].idx;
-        document.getElementById('hint').textContent = WORDS[idx].dica || "Sem dica.";
-        usedHint = true;
-        this.disabled = true;
-      }
-    });
-
-    document.getElementById('answerForm').addEventListener('submit', function(e){
-      e.preventDefault();
-      if (!challengeActive) return;
-      let answer = normalize(document.getElementById('answerInput').value);
-      let word = WORDS[obstacles[currentWordIdx].idx];
-      let accepted = word.pt.some(t => normalize(t) === answer);
-      if (accepted) {
-        completeChallenge();
-      } else {
-        document.getElementById('feedback').textContent = "Tradução incorreta. Tente novamente!";
-        playSound(audioFiles.error,0.38);
-      }
-    });
-
-    function completeChallenge() {
-      let timeTaken = (performance.now() - challengeStartTime)/1000;
-      let pts = Math.round(
-        usedHint ?
-          Math.max(10, 60 - 3.5*timeTaken) :
-          Math.max(20, 100 - 5*timeTaken)
-      );
-      points += pts;
-      wordsFound++;
-      obstacles[currentWordIdx].found = true;
-      document.getElementById('scoreValue').textContent = points;
-      document.getElementById('feedback').textContent = usedHint
-        ? `Correto! +${pts} pts (com dica)`
-        : `Correto! +${pts} pts`;
-      playSound(audioFiles.success,0.6);
-      setTimeout(()=>{
-        document.getElementById('modal').classList.add('hidden');
-        challengeActive = false;
-        if (wordsFound === obstacles.length) {
-          endGame();
-        }
-      }, 600);
-      clearInterval(challengeTimer);
-    }
-
-    function failChallenge() {
-      document.getElementById('feedback').textContent = `Tempo esgotado! Resposta: ${WORDS[obstacles[currentWordIdx].idx].pt[0]}`;
-      playSound(audioFiles.error,0.45);
-      setTimeout(()=>{
-        document.getElementById('modal').classList.add('hidden');
-        challengeActive = false;
-        wordsFound++;
-        obstacles[currentWordIdx].found = true;
-        if (wordsFound === obstacles.length) {
-          endGame();
-        }
-      }, 1200);
-      clearInterval(challengeTimer);
-    }
-
-    function endGame() {
-      document.getElementById('finalScore').textContent = points;
-      document.getElementById('finalPlayer').textContent = playerName;
-      document.getElementById('endModal').classList.remove('hidden');
-    }
-
-    function gameLoop() {
-      if (!challengeActive) {
-        updatePlayer();
-        updateCheckpoints();
-        checkObstacleCollision();
-      }
-      drawWorld();
-      requestAnimationFrame(gameLoop);
-    }
-
-    document.addEventListener('keydown', function(e){
-      if (["KeyW", "KeyA", "KeyS", "KeyD", "Space"].includes(e.code)) {
-        keys[e.code] = true;
-      }
-      if (challengeActive && e.code === "Escape") {
-        document.getElementById('modal').classList.add('hidden');
-        challengeActive = false;
-        clearInterval(challengeTimer);
-      }
-    });
-    document.addEventListener('keyup', function(e){
-      if (["KeyW", "KeyA", "KeyS", "KeyD", "Space"].includes(e.code)) {
-        keys[e.code] = false;
-      }
-    });
-
-    function adjustCanvas() {
-      let ww = Math.min(window.innerWidth-20, 900);
-      canvas.width = ww;
-    }
-    window.addEventListener('resize', adjustCanvas);
-    adjustCanvas();
-  </script>
-</body>
-</html>

@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Formatador ABNT</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-950 min-h-screen flex items-center justify-center p-4">
+  <div class="bg-gray-100 max-w-2xl w-full rounded-xl shadow-2xl p-6 space-y-4">
+    <h1 class="text-2xl font-bold text-center text-gray-900">Formatador de Referências ABNT</h1>
+    <p class="text-sm text-gray-600 text-center">Insira cada referência em um parágrafo diferente ou anexe arquivos (.txt, até 1&nbsp;MB cada). O resultado abrirá em nova página para você revisar e copiar.</p>
+    <textarea id="refs" class="w-full h-48 p-3 border rounded-md" placeholder="Digite as referências aqui, uma por parágrafo..."></textarea>
+    <input id="files" type="file" multiple accept=".txt" class="block w-full text-sm text-gray-700">
+    <button id="generate" class="w-full py-2 px-4 bg-blue-600 text-white rounded-md font-semibold hover:bg-blue-700">Formatar</button>
+    <p class="text-xs text-gray-600">⚠️ Sempre confira manualmente as referências geradas. O processo é automático e pode conter erros.</p>
+  </div>
+
+  <script>
+    function parseAuthor(name){
+      name = name.trim();
+      if(!name) return '';
+      const parts = name.split(/\s+/);
+      if(parts.length === 1) return parts[0].toUpperCase();
+      const last = parts.pop().toUpperCase();
+      return `${last}, ${parts.join(' ')}`;
+    }
+
+    function formatRef(str){
+      // tentativa simples: Autor. Titulo. Ano.
+      const match = str.match(/^(.*?)\.?\s+([^\.]+)\.\s*(\d{4})?\.?$/);
+      if(match){
+        const autor = parseAuthor(match[1]);
+        const titulo = match[2].trim();
+        const ano = match[3] ? match[3] : '';
+        return `${autor}. ${titulo}. ${ano}`.trim();
+      }
+      return str.trim();
+    }
+
+    async function readFiles(files){
+      const contents = [];
+      for(const file of files){
+        if(file.size > 1024*1024) continue; // limite 1MB
+        const text = await file.text();
+        const lines = text.split(/\r?\n/).filter(l => l.trim());
+        contents.push(...lines);
+      }
+      return contents;
+    }
+
+    document.getElementById('generate').addEventListener('click', async () => {
+      const manual = document.getElementById('refs').value
+        .split(/\n\s*\n/)
+        .map(s => s.trim())
+        .filter(Boolean);
+      const fileLines = await readFiles(document.getElementById('files').files);
+      const allRefs = [...manual, ...fileLines];
+      const formatted = allRefs.map(formatRef).join('\n');
+      const w = window.open('', '_blank');
+      w.document.write(`<!DOCTYPE html><html lang='pt-br'><head><meta charset='UTF-8'><title>Referências ABNT</title><style>body{font-family:Arial,sans-serif;padding:20px;}textarea{width:100%;height:80vh;}</style></head><body><h1>Referências no padrão ABNT</h1><textarea>${formatted.replace(/</g,'&lt;')}</textarea></body></html>`);
+      w.document.close();
+    });
+  </script>
+</body>
+</html>

@@ -5,13 +5,14 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Formatador ABNT</title>
   <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.9.179/build/pdf.min.js"></script>
 </head>
 <body class="bg-gray-950 min-h-screen flex items-center justify-center p-4">
   <div class="bg-gray-100 max-w-2xl w-full rounded-xl shadow-2xl p-6 space-y-4">
     <h1 class="text-2xl font-bold text-center text-gray-900">Formatador de Referências ABNT</h1>
-    <p class="text-sm text-gray-600 text-center">Insira cada referência em um parágrafo diferente ou anexe arquivos (.txt, até 1&nbsp;MB cada). O resultado abrirá em nova página para você revisar e copiar.</p>
+    <p class="text-sm text-gray-600 text-center">Insira cada referência em um parágrafo diferente ou anexe arquivos (.txt ou .pdf, até 1&nbsp;MB cada). O resultado abrirá em nova página para você revisar e copiar.</p>
     <textarea id="refs" class="w-full h-48 p-3 border rounded-md" placeholder="Digite as referências aqui, uma por parágrafo..."></textarea>
-    <input id="files" type="file" multiple accept=".txt" class="block w-full text-sm text-gray-700">
+    <input id="files" type="file" multiple accept=".txt,.pdf" class="block w-full text-sm text-gray-700">
     <button id="generate" class="w-full py-2 px-4 bg-blue-600 text-white rounded-md font-semibold hover:bg-blue-700">Formatar</button>
     <p class="text-xs text-gray-600">⚠️ Sempre confira manualmente as referências geradas. O processo é automático e pode conter erros.</p>
   </div>
@@ -33,18 +34,49 @@
         const autor = parseAuthor(match[1]);
         const titulo = match[2].trim();
         const ano = match[3] ? match[3] : '';
-        return `${autor}. ${titulo}. ${ano}`.trim();
+        return { text: `${autor}. ${titulo}. ${ano}`.trim(), valid: true };
       }
-      return str.trim();
+      return { text: str.trim(), valid: false };
+    }
+
+    async function readPdf(file){
+      const data = new Uint8Array(await file.arrayBuffer());
+      const pdf = await pdfjsLib.getDocument({data}).promise;
+      let text = '';
+      for(let i=1;i<=pdf.numPages;i++){
+        const page = await pdf.getPage(i);
+        const cont = await page.getTextContent();
+        text += cont.items.map(it => it.str).join(' ') + '\n';
+      }
+      return text;
+    }
+
+    function extractRefsFromText(txt){
+      const lower = txt.toLowerCase();
+      let start = 0;
+      const m = lower.match(/(refer[eê]ncias|bibliografia)/i);
+      if(m) start = lower.indexOf(m[0]) + m[0].length;
+      const part = txt.slice(start);
+      return part.split(/\n\s*\n/).map(s => s.trim()).filter(Boolean);
     }
 
     async function readFiles(files){
       const contents = [];
       for(const file of files){
         if(file.size > 1024*1024) continue; // limite 1MB
-        const text = await file.text();
-        const lines = text.split(/\r?\n/).filter(l => l.trim());
-        contents.push(...lines);
+        const name = file.name.toLowerCase();
+        if(name.endsWith('.txt')){
+          const text = await file.text();
+          const lines = text.split(/\r?\n/).filter(l => l.trim());
+          contents.push(...lines);
+        } else if(name.endsWith('.pdf')){
+          try{
+            const text = await readPdf(file);
+            contents.push(...extractRefsFromText(text));
+          }catch(e){
+            console.error('Erro ao ler PDF', e);
+          }
+        }
       }
       return contents;
     }
@@ -56,11 +88,69 @@
         .filter(Boolean);
       const fileLines = await readFiles(document.getElementById('files').files);
       const allRefs = [...manual, ...fileLines];
-      const formatted = allRefs.map(formatRef).join('\n');
+      const results = allRefs.map(formatRef);
+      const invalidCount = results.filter(r => !r.valid).length;
+      const formatted = results.map((r,i) => `${i+1}. ${r.text}`).join('\n\n');
       const w = window.open('', '_blank');
-      w.document.write(`<!DOCTYPE html><html lang='pt-br'><head><meta charset='UTF-8'><title>Referências ABNT</title><style>body{font-family:Arial,sans-serif;padding:20px;}textarea{width:100%;height:80vh;}</style></head><body><h1>Referências no padrão ABNT</h1><textarea>${formatted.replace(/</g,'&lt;')}</textarea></body></html>`);
+      w.document.write(`<!DOCTYPE html><html lang='pt-br'><head><meta charset='UTF-8'><title>Referências ABNT</title><style>body{font-family:Arial,sans-serif;padding:20px;}textarea{width:100%;height:80vh;}</style></head><body><h1>Referências no padrão ABNT</h1><p>${invalidCount} referência(s) estavam fora do padrão e foram ajustadas. Revise o resultado.</p><textarea>${formatted.replace(/</g,'&lt;')}</textarea></body></html>`);
       w.document.close();
     });
   </script>
 </body>
 </html>
+index.html
++1
+-0
+
+@@ -46,50 +46,51 @@
+<body class="flex flex-col items-center min-h-screen bg-gray-900">
+
+  <!-- Música de fundo -->
+  <audio id="bgm" src="https://opengameart.org/sites/default/files/8bit%20Dreams.ogg" preload="auto" loop></audio>
+
+  <!-- Tela Inicial -->
+  <div id="startScreen" class="fixed inset-0 bg-gray-950 flex flex-col items-center justify-center z-50">
+    <div class="bg-gray-100 rounded-2xl p-8 shadow-2xl flex flex-col items-center gap-6 w-[360px]">
+      <h1 class="text-2xl font-bold text-gray-900 mb-2">Bem-vindo ao Jogo de Hebraico Bíblico!</h1>
+      <div class="flex flex-col gap-2 w-full">
+        <label class="text-gray-800 font-semibold mb-1 text-base" for="username">Seu nome de jogador:</label>
+        <input id="username" type="text" maxlength="18" autocomplete="off" class="w-full px-4 py-2 rounded-lg border-2 border-gray-300 focus:outline-none focus:border-blue-500 text-lg text-gray-800" placeholder="Digite seu nome..."/>
+      </div>
+      <div class="w-full">
+        <span class="font-semibold text-gray-800 mb-2 block">Escolha seu personagem:</span>
+        <div class="flex flex-row gap-7 justify-center mt-1">
+          <button id="char1" class="char-choice rounded-full border-2 border-gray-300 p-1 bg-white focus:outline-none">
+            <img src="https://drive.google.com/uc?export=view&id=1ftgojj7A2vf486g1Rh8gkcvB1jIkeKSL" alt="Personagem 1" class="w-20 h-20 object-cover rounded-full"/>
+          </button>
+          <button id="char2" class="char-choice rounded-full border-2 border-gray-300 p-1 bg-white focus:outline-none">
+            <img src="https://drive.google.com/uc?export=view&id=1kMdGAgs8aciiAdP4bfEIbvooQyP-gEi1" alt="Personagem 2" class="w-20 h-20 object-cover rounded-full"/>
+          </button>
+        </div>
+      </div>
+      <button id="playBtn" class="mt-2 w-full px-4 py-2 bg-blue-600 text-white rounded-lg font-semibold shadow hover:bg-blue-700 transition text-lg disabled:bg-gray-300 disabled:text-gray-400 disabled:cursor-not-allowed" disabled>Play</button>
+      <a href="abnt.html" class="text-blue-300 underline text-sm text-center mt-3 block">Formatador de Referências ABNT</a>
+    </div>
+  </div>
+
+  <div id="score" class="fixed top-5 right-8 text-xl text-white z-20 bg-gray-700 px-5 py-2 rounded-2xl shadow-lg font-bold flex items-center gap-2" style="display:none;">
+    Pontos: <span id="scoreValue">0</span>
+  </div>
+  <canvas id="game" width="900" height="440" class="rounded-2xl border-2 border-gray-800 shadow-2xl mt-10" style="display:none;"></canvas>
+
+  <!-- Modal para desafio -->
+  <div id="modal" class="fixed inset-0 flex items-center justify-center z-50 hidden">
+    <div class="modal-bg absolute inset-0"></div>
+    <div class="relative p-8 bg-gray-100 rounded-xl shadow-2xl w-[350px] slide-in">
+      <div class="flex flex-col items-center gap-4">
+        <span class="text-lg text-gray-900 font-semibold">Traduza a palavra:</span>
+        <span id="hebrewWord" class="hebrew text-4xl text-gray-900"></span>
+        <form id="answerForm" class="w-full flex flex-col gap-3 items-center">
+          <input type="text" id="answerInput" autocomplete="off" placeholder="Digite a tradução..." class="w-full px-4 py-2 rounded-lg border-2 border-gray-300 focus:outline-none focus:border-blue-500 text-lg text-gray-800">
+          <div class="flex flex-row gap-4 w-full justify-between items-center">
+            <button type="button" id="hintBtn" class="px-3 py-1 bg-yellow-400 hover:bg-yellow-500 text-gray-900 font-bold rounded-lg transition">Dica</button>
+            <button type="submit" class="px-5 py-2 bg-blue-600 text-white rounded-lg font-semibold shadow hover:bg-blue-700 transition">Responder</button>
+          </div>
+        </form>
+        <div id="feedback" class="text-base text-red-600 font-semibold mt-2 min-h-[28px]"></div>
+        <div id="hint" class="text-gray-800 text-sm font-medium"></div>
+        <div id="timer" class="text-gray-700 text-xs mt-1"></div>
